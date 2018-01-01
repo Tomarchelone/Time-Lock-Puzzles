@@ -1,0 +1,8 @@
+[package]
+authors = ["tom"]
+name = "time_lock_puzzles"
+version = "0.1.0"
+
+[dependencies]
+num = "0.1.41"
+rand = "0.3.1"

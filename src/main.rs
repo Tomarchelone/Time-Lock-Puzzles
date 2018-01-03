@@ -1,6 +1,5 @@
 extern crate num;
 extern crate rand;
-//extern crate crypto;
 extern crate rusty_secrets;
 
 use rand::Rng;

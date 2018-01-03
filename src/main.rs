@@ -1,11 +1,14 @@
 extern crate num;
 extern crate rand;
 //extern crate crypto;
+extern crate rusty_secrets;
 
 use rand::Rng;
 
 use num::bigint::RandBigInt;
 use num::bigint::ToBigUint;
+use rusty_secrets::generate_shares;
+use rusty_secrets::recover_secret;
 
 struct TimeLockPuzzle {
     n: num::BigUint,
@@ -67,12 +70,7 @@ fn puzzle_generator(t: num::BigUint) -> (TimeLockPuzzle, num::BigUint) {
     let two = &one + &one;
     let e = two.modpow(&t, &phi);
     let key = a.modpow(&e, &n);
-    (TimeLockPuzzle {
-        n,
-        a,
-        t,
-    },
-    key)
+    (TimeLockPuzzle {n, a, t}, key)
 }
 
 fn puzzle_solver(puzzle: &TimeLockPuzzle) -> num::BigUint {
@@ -93,4 +91,13 @@ fn main() {
         print!("n: {}\na: {}\nt: {}\nkey: {}\n", puzzle.n, puzzle.a, puzzle.t, key);
         let ans = puzzle_solver(&puzzle);
         assert_eq!(ans, key);
-}
+
+        // rusty_secrets library provides everithig we need for splitting the key
+        let parts = 5;
+        let treshold = 4;
+        let mut shares = generate_shares(treshold, parts, &key.to_bytes_be()).unwrap();
+        // let's intentionally loose the 5-th share and check if key can be restored with 4 shares
+        shares.truncate(4);
+        let ans = num::bigint::BigUint::from_bytes_be(&recover_secret(shares).unwrap());
+        assert_eq!(ans, key);
+    }

@@ -8,5 +8,3 @@ num = "0.1.41"
 rand = "0.3.1"
 rust-crypto = "0.2.36"
 rusty_secrets = "0.0.2"
-time_lock_puzzles = { path = "." }
-

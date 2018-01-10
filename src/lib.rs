@@ -10,9 +10,9 @@ use rusty_secrets::generate_shares;
 use rusty_secrets::recover_secret;
 
 pub struct TimeLockPuzzle {
-    n: num::BigUint,
-    a: num::BigUint,
-    t: num::BigUint,
+    pub n: num::BigUint,
+    pub a: num::BigUint,
+    pub t: num::BigUint,
 }
 
 // generates pseudo-prime number with given bit size and number of check loops

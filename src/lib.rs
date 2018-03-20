@@ -1,23 +1,24 @@
 extern crate num;
 extern crate rand;
-extern crate rusty_secrets;
+//extern crate rusty_secrets;
 
 use rand::Rng;
 
 use num::bigint::RandBigInt;
 use num::bigint::ToBigUint;
-use rusty_secrets::generate_shares;
-use rusty_secrets::recover_secret;
+
+//use rusty_secrets::generate_shares;
+//use rusty_secrets::recover_secret;
 
 pub struct TimeLockPuzzle {
-    pub n: num::BigUint,
-    pub a: num::BigUint,
-    pub t: num::BigUint,
+    pub n: num::BigUint, // n = p * q, where p and q are primes
+    pub a: num::BigUint, // Number to square
+    pub t: num::BigUint, // Number of squarings
 }
 
 pub struct PuzzleGenerator {
-    bit_size: usize,
-    assurance: usize,
+    bit_size: usize, // Bitsize of p and q
+    assurance: usize, // Number of rounds in prime-checking. Might be removed
 }
 
 impl PuzzleGenerator {
@@ -43,8 +44,11 @@ impl PuzzleGenerator {
         }
     }
 
-    // t - number of squarings we want client to perform
-    pub fn gen_puzzle(&self, t: num::BigUint) -> (TimeLockPuzzle, num::BigUint) {
+    // tt - number of squarings we want client to perform
+    pub fn gen_puzzle<I>(&self, tt: I) -> (TimeLockPuzzle, num::BigUint)
+        where I:  num::bigint::ToBigUint
+    {
+        let t = tt.to_biguint().unwrap();
         let p = gen_prime(self.bit_size, self.assurance);
         let q = gen_prime(self.bit_size, self.assurance);
         let n = &p * &q;
@@ -61,8 +65,8 @@ impl PuzzleGenerator {
     }
 }
 
-// generates pseudo-prime number with given bit size and number of check loops
-// may be improved later with Miller-Rabin test
+// Generates pseudo-prime number with given bit size and number of check loops
+// May be improved later with Miller-Rabin test
 fn gen_prime(bit_size: usize, assurance: usize) -> num::BigUint {
     let mut rng = rand::thread_rng();
     let zero = 0.to_biguint().unwrap();
@@ -71,18 +75,18 @@ fn gen_prime(bit_size: usize, assurance: usize) -> num::BigUint {
 
     loop {
         let mut seems_prime = true;
-        // we set first and last bit to 1
+        // We set first and last bit to 1
         let candidate = rng.gen_biguint(bit_size) |
                         &one |
                         &one << (bit_size - 1);
-        // first we check some small primes
+        // First we check some small primes
         for small_prime in small_primes.into_iter() {
             if (&candidate % small_prime) == zero {
                 seems_prime = false;
                 break;
             }
         }
-        // now we use Fermat's small teorem
+        // Now we use Fermat's small teorem
         if seems_prime {
             for _ in 1..assurance {
                 let random_bitsize = rng.gen_range(1, bit_size - 1);
@@ -106,10 +110,12 @@ impl TimeLockPuzzle {
         let (n, mut a, mut t) = (self.n.clone(), self.a.clone(), self.t.clone());
         let zero = 0.to_biguint().unwrap();
         let one = 1.to_biguint().unwrap();
+
         while t != zero {
             t -= &one;
             a = (&a * &a) % &n;
         }
+
         a
     }
 }

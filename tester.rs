@@ -3,7 +3,7 @@ extern crate time_lock_puzzles;
 use time_lock_puzzles::*;
 
 fn main() {
-    // Let's crate a puzzle generator.
+    // Let's create a puzzle generator.
     // If we want we can change bitsize and assurance
     let puzzle_generator = PuzzleGenerator::new();
 
@@ -12,7 +12,7 @@ fn main() {
     // for example, any built-in integer type.
     let (puzzle, true_key) = puzzle_generator.gen_puzzle(100);
 
-    // Now we have a puzzle and a key. Now we keep the key and send
+    // Now we have a puzzle and a key. We keep the key and send
     // the puzzle to solver.
 
     // As solver we receive the puzzle and call 'solve()' method on it:

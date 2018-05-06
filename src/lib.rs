@@ -1,19 +1,27 @@
 extern crate num;
 extern crate rand;
-//extern crate rusty_secrets;
+
+use std::collections::HashMap;
+use std::clone::Clone;
 
 use rand::Rng;
 
 use num::bigint::RandBigInt;
 use num::bigint::ToBigUint;
 
-//use rusty_secrets::generate_shares;
-//use rusty_secrets::recover_secret;
-
+#[derive(Clone)]
 pub struct TimeLockPuzzle {
     pub n: num::BigUint, // n = p * q, where p and q are primes
     pub a: num::BigUint, // Number to square
     pub t: num::BigUint, // Number of squarings
+}
+
+// puzzle with answers
+pub struct UnlockedPuzzle {
+    pub puzzle: TimeLockPuzzle,
+    pub p: num::BigUint, // prime derivative of n
+    pub q: num::BigUint, // prime derivative of n
+    pub key: num::BigUint, // answer to the puzzle: a**t mod n
 }
 
 pub struct PuzzleGenerator {
@@ -23,7 +31,7 @@ pub struct PuzzleGenerator {
 
 impl PuzzleGenerator {
     pub fn new() -> PuzzleGenerator {
-        let (bit_size, assurance) = (128, 32);
+        let (bit_size, assurance) = (1024, 8);
         PuzzleGenerator {
             bit_size,
             assurance,
@@ -45,12 +53,12 @@ impl PuzzleGenerator {
     }
 
     // tt - number of squarings we want client to perform
-    pub fn gen_puzzle<I>(&self, tt: I) -> (TimeLockPuzzle, num::BigUint)
-        where I:  num::bigint::ToBigUint
+    pub fn gen_puzzle<U>(&self, tt: U) -> UnlockedPuzzle
+        where U:  num::bigint::ToBigUint
     {
         let t = tt.to_biguint().unwrap();
-        let p = gen_prime(self.bit_size, self.assurance);
-        let q = gen_prime(self.bit_size, self.assurance);
+        let p = gen_pseudo_prime(self.bit_size, self.assurance);
+        let q = gen_pseudo_prime(self.bit_size, self.assurance);
         let n = &p * &q;
         let one = 1.to_biguint().unwrap();
         let phi = (&p - &one) * (&q - &one);
@@ -61,13 +69,18 @@ impl PuzzleGenerator {
         let two = &one + &one;
         let e = two.modpow(&t, &phi);
         let key = a.modpow(&e, &n);
-        (TimeLockPuzzle {n, a, t}, key)
+        UnlockedPuzzle {
+            puzzle : TimeLockPuzzle {n, a, t},
+            p,
+            q,
+            key,
+        }
     }
 }
 
 // Generates pseudo-prime number with given bit size and number of check loops
 // May be improved later with Miller-Rabin test
-fn gen_prime(bit_size: usize, assurance: usize) -> num::BigUint {
+fn gen_pseudo_prime(bit_size: usize, assurance: usize) -> num::BigUint {
     let mut rng = rand::thread_rng();
     let zero = 0.to_biguint().unwrap();
     let one = 1.to_biguint().unwrap();
@@ -118,4 +131,92 @@ impl TimeLockPuzzle {
 
         a
     }
+
+    pub fn solve_with_a(&self, mut a: num::BigUint) -> num::BigUint {
+        let (n, mut t) = (self.n.clone(), self.t.clone());
+        let zero = 0.to_biguint().unwrap();
+        let one = 1.to_biguint().unwrap();
+
+        while t != zero {
+            t -= &one;
+            a = (&a * &a) % &n;
+        }
+
+        a
+    }
+}
+
+// Entity who provides the puzzles and validates the solutions
+pub struct Auditor {
+    pub id: i32,
+    time_lock: num::BigUint, // заменить на where U:  num::bigint::ToBigUint
+    generator: PuzzleGenerator,
+    requests: HashMap<i32, UnlockedPuzzle>,  // множество выданных загадок
+}
+
+impl Auditor {
+    pub fn new<U>(id: i32, tl: U) -> Auditor
+        where U: num::bigint::ToBigUint
+    {
+        let generator = PuzzleGenerator::new();
+        let requests = HashMap::new();
+        let time_lock = tl.to_biguint().unwrap();
+        Auditor {
+            id,
+            time_lock,
+            generator,
+            requests,
+        }
+    }
+
+    // return puzzle and remember the solver
+    pub fn serve_puzzle(&mut self, solver_id: i32, number_of_auditors: usize) -> TimeLockPuzzle {
+        let unlocked = self.generator.gen_puzzle(self.time_lock.clone() / number_of_auditors); // so total time is as we want it to be
+        let puzzle = unlocked.puzzle.clone();
+        self.requests.insert(solver_id, unlocked);
+        puzzle
+    }
+
+    // check the correspondent solution and forget the solver
+    pub fn verify(&mut self, solver_id: i32, solutions: &HashMap<i32, (num::BigUint, num::BigUint)>) -> bool {
+        let unblocked = self.requests.remove(&solver_id).unwrap(); // forget the solver
+        let puzzle = unblocked.puzzle;
+        let (a, key) = solutions[&self.id].clone();
+        if puzzle.a == a {
+            return unblocked.key == key;
+        }
+
+        let t = &puzzle.t;
+        let p = &unblocked.p;
+        let q = &unblocked.q;
+        let n = &puzzle.n;
+        let one = 1.to_biguint().unwrap();
+        let phi = (p - &one) * (q - &one);
+
+        let two = &one + &one;
+        let e = two.modpow(t, &phi);
+        let true_key = a.modpow(&e, n);
+
+        key == true_key
+    }
+}
+
+pub fn solve(puzzles: &HashMap<i32, TimeLockPuzzle>) -> HashMap<i32, (num::BigUint, num::BigUint)> {
+    let mut a: num::BigUint = 0.to_biguint().unwrap();
+    let a_ref = &mut a;
+    let mut solutions: HashMap<i32, (num::BigUint, num::BigUint)> = HashMap::new();
+    for key in puzzles.keys() {
+        if *a_ref == 0.to_biguint().unwrap() {
+            *a_ref = puzzles[key].a.clone();
+            let new_a = puzzles[key].solve();
+            solutions.insert(*key, (a_ref.clone(), new_a.clone()));
+            *a_ref = new_a;
+        } else {
+            let new_a = puzzles[key].solve_with_a(a_ref.clone());
+            solutions.insert(*key, (a_ref.clone(), new_a.clone()));
+            *a_ref = new_a;
+        }
+    }
+
+    solutions
 }

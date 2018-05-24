@@ -1,0 +1,8 @@
+[package]
+name = "example"
+version = "0.1.0"
+authors = ["tom"]
+
+[dependencies]
+time_lock_puzzles = { path = "/home/tom/Рабочий стол/Rust/time_lock_puzzles" }
+num = "*"

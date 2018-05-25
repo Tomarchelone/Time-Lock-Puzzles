@@ -177,12 +177,14 @@ impl TimeLockPuzzle {
         a
     }
 
-    // returns string (n, a, t)"
+    // returns string ""n a t"
     pub fn stringify(&self) -> String {
-        format!("{} {} {}"
-                , &self.n.to_str_radix(10)
-                , &self.a.to_str_radix(10)
-                , &self.t.to_str_radix(10)
+        format!
+        (
+            "{} {} {}"
+            , &self.n.to_str_radix(10)
+            , &self.a.to_str_radix(10)
+            , &self.t.to_str_radix(10)
         )
     }
 }
@@ -199,14 +201,11 @@ impl Auditor {
     pub fn new<U>(id: i32, tl: U) -> Auditor
         where U: num::bigint::ToBigUint
     {
-        let generator = PuzzleGenerator::new();
-        let requests = HashMap::new();
-        let time_lock = tl.to_biguint().unwrap();
         Auditor {
             id,
-            time_lock,
-            generator,
-            requests,
+            time_lock: tl.to_biguint().unwrap(),
+            generator: PuzzleGenerator::new(),
+            requests: HashMap::new(),
         }
     }
 
@@ -214,28 +213,30 @@ impl Auditor {
     pub fn serve_puzzle(&mut self, solver_id: i32, number_of_auditors: usize) -> TimeLockPuzzle {
         let unlocked = self.generator.gen_puzzle(self.time_lock.clone() / number_of_auditors);
         let puzzle = unlocked.puzzle.clone();
+
         self.requests.insert(solver_id, unlocked);
+
         puzzle
     }
 
     pub fn verify(&mut self, solver_id: i32, solutions: &Vec<(i32, num::BigUint)>) -> bool {
         let unblocked = self.requests.remove(&solver_id).unwrap();
         let puzzle = unblocked.puzzle;
+
         let mut input = num::BigUint::zero();
         for (id, solution) in solutions.iter() {
-            if  *id == self.id {
+            if *id == self.id {
                 if input == num::BigUint::zero() {
                     return *solution == unblocked.key; 
                 }
 
-                let t = &puzzle.t;
-                let p = &unblocked.p;
-                let q = &unblocked.q;
-                let n = &puzzle.n;
-                let one = num::BigUint::one();
-                let phi = (p - &one) * (q - &one);
+                let (t, n) = (&puzzle.t, &puzzle.n);
+                let (p, q) = (&unblocked.p, &unblocked.q);
 
+                let one = num::BigUint::one();
                 let two = &one + &one;
+
+                let phi = (p - &one) * (q - &one);
                 let e = two.modpow(t, &phi);
                 let true_key = input.modpow(&e, n);
 
@@ -265,7 +266,7 @@ impl Solver {
     pub fn solve(&self, puzzles: &HashMap<i32, TimeLockPuzzle>) -> Vec<(i32, num::BigUint)> {
         let mut solutions: Vec<(i32, num::BigUint)> = Vec::new();
 
-        let mut a: num::BigUint = num::BigUint::zero();
+        let mut a = num::BigUint::zero();
         for (&id, puzzle) in puzzles {
             if solutions.is_empty() {
                 a = puzzle.a.clone();
@@ -284,7 +285,7 @@ impl Solver {
         solutions
     }
 
-    // returns string "id (id, solution) (id, solution) ..."
+    // returns string "id id:solution id:solution ..."
     pub fn solutions_stringify(&self, solutions: Vec<(i32, num::BigUint)>) -> String {
         let mut result = self.id.to_string();
 
@@ -325,6 +326,7 @@ impl TlpClient {
                     },
                 }
             };
+
             let mut puzzle_stream = puzzle_stream.unwrap();
 
             let message = format!("[PUZ] {}", self.solver.id);
@@ -336,10 +338,10 @@ impl TlpClient {
 
             println!("Client {} received the answer from server {}", self.solver.id, node_id);
 
-            let n_a_t: Vec<&str> = puzzle_str.split_whitespace().collect();
-            let n = num::BigUint::from_str_radix(n_a_t[0], 10).unwrap();
-            let a = num::BigUint::from_str_radix(n_a_t[1], 10).unwrap();
-            let t = num::BigUint::from_str_radix(n_a_t[2], 10).unwrap();
+            let mut iter = puzzle_str
+                            .split_whitespace()
+                            .map(|x| num::BigUint::from_str_radix(x, 10).unwrap());
+            let (n, a, t)  = (iter.next().unwrap(), iter.next().unwrap(), iter.next().unwrap());
 
             self.puzzles.insert(*node_id, TimeLockPuzzle {n, a, t});
         }
@@ -409,8 +411,9 @@ impl TlpServer {
 
     pub fn handle(&mut self, mut stream: TcpStream) {
         let message: String = receive_message(&mut stream);
-
         let message: Vec<&str> = message.split_whitespace().collect();
+
+        //let message: Vec<&str> = message.split_whitespace().collect();
 
         // [NEW] node_id            - message from new node
         // [PUZ] id                 - request for puzzle
@@ -421,6 +424,7 @@ impl TlpServer {
             "[NEW]" => {
                // TODO? 
             },
+
             "[PUZ]" => {
                 let id = i32::from_str_radix(message[1], 10).unwrap();
                 let puzzle_str = self.auditor.serve_puzzle(id, self.nodes.len()).stringify();
@@ -433,6 +437,7 @@ impl TlpServer {
                 }
                 self.solvers.insert(id, set);
             },
+
             "[VER]" => {
                 let id = i32::from_str_radix(message[1], 10).unwrap();
 
@@ -440,8 +445,12 @@ impl TlpServer {
                 
                 for pair in message.iter().skip(2) {
                     let pair: Vec<&str> = pair.split(":").collect();
-                    solutions.push((i32::from_str_radix(pair[0], 10).unwrap()
-                                    , num::BigUint::from_str_radix(pair[1], 10).unwrap()));
+                    solutions.push(
+                        (
+                            i32::from_str_radix(pair[0], 10).unwrap(),
+                            num::BigUint::from_str_radix(pair[1], 10).unwrap()
+                        )
+                    );
                 }
 
                 if self.auditor.verify(id, &solutions) {
@@ -456,11 +465,17 @@ impl TlpServer {
                 }
 
             },
+
             "[COR]" => {
                 let id = i32::from_str_radix(message[1], 10).unwrap();
                 let node_id = i32::from_str_radix(message[2], 10).unwrap();
 
-                println!("Server {} received comfirmation from server {} about Client {}", self.auditor.id, node_id, id);
+                println!(
+                    "Server {} received comfirmation from server {} about Client {}"
+                    , self.auditor.id
+                    , node_id
+                    , id
+                );
                 
                 match self.solvers.get_mut(&id) {
                     Some(set) => {set.remove(&node_id);},
@@ -468,7 +483,11 @@ impl TlpServer {
                 }
 
                 if self.solvers[&id].is_empty() {
-                    println!("SERVER {} ADDED REQUEST OF SOLVER {} TO BLOCKCHAIN", self.auditor.id, id);
+                    println!(
+                        "SERVER {} ADDED REQUEST OF SOLVER {} TO BLOCKCHAIN"
+                        , self.auditor.id
+                        , id
+                    );
                 }
                     
             },

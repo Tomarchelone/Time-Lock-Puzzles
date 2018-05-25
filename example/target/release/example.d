@@ -1,1 +1,1 @@
-/windows/AllHere/Archives/Rust/example/target/release/example: /home/tom/Рабочий\ стол/Rust/time_lock_puzzles/src/lib.rs /windows/AllHere/Archives/Rust/example/src/main.rs
+/windows/AllHere/Archives/Rust/time_lock_puzzles/example/target/release/example: /windows/AllHere/Archives/Rust/time_lock_puzzles/example/src/main.rs /windows/AllHere/Archives/Rust/time_lock_puzzles/example/src/time_lock_puzzles/src/lib.rs

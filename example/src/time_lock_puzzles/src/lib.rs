@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::clone::Clone;
 use std::io::prelude::*;
 use std::thread;
-use std::sync::Mutex;
+use std::sync::{Mutex, Arc};
 use std::net::TcpListener;
 use std::net::TcpStream;
 
@@ -376,10 +376,11 @@ impl TlpClient {
 }
 
 pub struct TlpServer {
+    id: i32,
     addr: String, // Web address
-    auditor: Mutex<Auditor>,
-    nodes: Mutex<HashMap<i32, String>>, // addresses of nodes
-    solvers: Mutex<HashMap<i32, HashSet<i32>>>, // Set of nodes, who yet haven't verified solver
+    auditor: Arc<Mutex<Auditor>>,
+    nodes: Arc<Mutex<HashMap<i32, String>>>, // addresses of nodes
+    solvers: Arc<Mutex<HashMap<i32, HashSet<i32>>>>, // Set of nodes, who yet haven't verified solver
 }
 
 impl TlpServer {
@@ -387,137 +388,44 @@ impl TlpServer {
         where U: num::bigint::ToBigUint
     {
         TlpServer {
+            id,
             addr,
-            auditor: Mutex::new(Auditor::new(id, tl)),
-            nodes: Mutex::new(nodes),
-            solvers: Mutex::new(HashMap::<i32, HashSet<i32>>::new()),
+            auditor: Arc::new(Mutex::new(Auditor::new(id, tl))),
+            nodes: Arc::new(Mutex::new(nodes)),
+            solvers: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     pub fn start(&mut self) {
-        let our_id: i32 = self.auditor.lock().unwrap().id;
-        println!("Server {} is trying to bind to {}", our_id, self.addr);
+        println!("Server {} is trying to bind to {}", self.id, self.addr);
 
         let listener = TcpListener::bind(&self.addr).unwrap();
 
-        println!("SERVER {} IS RUNNING", our_id);
+        println!("SERVER {} IS RUNNING", self.id);
 
         for stream in listener.incoming() {
+            let auditor = Arc::clone(&self.auditor);
+            let nodes = Arc::clone(&self.nodes);
+            let solvers = Arc::clone(&self.solvers);
             match stream {
                 Ok(stream) => {
-                    handle(&self.auditor, &self.nodes, &self.solvers, stream); 
+                    thread::spawn(move || { handle(auditor, nodes, solvers, stream) }); 
                 },
-                _ => {println!("Failed to connect to {}", our_id)}
+                _ => {println!("Failed to connect to {}", self.id)}
             }
         }
         
-    }
- 
-    /*pub fn handle(&mut self, mut stream: TcpStream) {
-        let message: String = receive_message(&mut stream);
-        let message: Vec<&str> = message.split_whitespace().collect();
-
-        //let message: Vec<&str> = message.split_whitespace().collect();
-
-        // [NEW] node_id            - message from new node
-        // [PUZ] id                 - request for puzzle
-        // [VER] id id:solution ... - sequest for verification
-        // [COR] id node_id         - message from other node, verifying correctness of id's solution
-
-        match message[0] as &str {
-            "[NEW]" => {
-               // TODO? 
-            },
-
-            "[PUZ]" => {
-                let id = i32::from_str_radix(message[1], 10).unwrap();
-                let puzzle_str = self.auditor.lock().unwrap().serve_puzzle(id, self.nodes.lock().unwrap().len()).stringify();
-
-                write_message(&mut stream, puzzle_str);
-
-                let mut set = HashSet::<i32>::new();
-                for node in self.nodes.lock().unwrap().keys() {
-                    set.insert(*node);
-                }
-                self.solvers.lock().unwrap().insert(id, set);
-            },
-
-            "[VER]" => {
-                let id = i32::from_str_radix(message[1], 10).unwrap();
-
-                let mut solutions = Vec::<(i32, num::BigUint)>::new();
-                
-                for pair in message.iter().skip(2) {
-                    let pair: Vec<&str> = pair.split(":").collect();
-                    solutions.push(
-                        (
-                            i32::from_str_radix(pair[0], 10).unwrap(),
-                            num::BigUint::from_str_radix(pair[1], 10).unwrap()
-                        )
-                    );
-                }
-
-                if self.auditor.lock().unwrap().verify(id, &solutions) {
-                    println!("Server {} verified solution of Client {}", our_id, &id);
-
-                    self.solvers.lock().unwrap().get_mut(&id).unwrap().remove(&our_id);
-
-                    self.send_ok_2(&id);
-                } else {
-                    self.solvers.remove(&id);
-                    // TODO Send not ok to everyone
-                }
-
-            },
-
-            "[COR]" => {
-                let id = i32::from_str_radix(message[1], 10).unwrap();
-                let node_id = i32::from_str_radix(message[2], 10).unwrap();
-
-                println!(
-                    "Server {} received comfirmation from server {} about Client {}"
-                    , self.auditor.id
-                    , node_id
-                    , id
-                );
-                
-                match self.solvers.get_mut(&id) {
-                    Some(set) => {set.remove(&node_id);},
-                    _ => { println!("get_mut error") },
-                }
-
-                if self.solvers[&id].is_empty() {
-                    println!(
-                        "SERVER {} ADDED REQUEST OF SOLVER {} TO BLOCKCHAIN"
-                        , self.auditor.id
-                        , id
-                    );
-                }
-                    
-            },
-            _ => {}
-        }
-    }*/
-
-    /*pub fn send_ok(&self, id: &i32) {
-        for (node_id, addr) in &self.nodes {
-            if *node_id != self.auditor.id {
-                let mut ok_stream = TcpStream::connect(addr).unwrap();
-
-                write_message(&mut ok_stream, format!("[COR] {} {}", id, self.auditor.id));
-            }
-        }
-    }*/
+    } 
 }
 
 // auditor, nodes, solvers
-pub fn handle(auditor: &Mutex<Auditor>, nodes: &Mutex<HashMap<i32, String>>
-                , solvers: &Mutex<HashMap<i32, HashSet<i32>>>
-                , mut stream: TcpStream) {
+pub fn handle(auditor: Arc<Mutex<Auditor>>
+              , nodes: Arc<Mutex<HashMap<i32, String>>>
+              , solvers: Arc<Mutex<HashMap<i32, HashSet<i32>>>>
+              , mut stream: TcpStream) {
     let message: String = receive_message(&mut stream);
     let message: Vec<&str> = message.split_whitespace().collect();
     let our_id = auditor.lock().unwrap().id;
-
     //let message: Vec<&str> = message.split_whitespace().collect();
 
     // [NEW] node_id            - message from new node
@@ -563,7 +471,7 @@ pub fn handle(auditor: &Mutex<Auditor>, nodes: &Mutex<HashMap<i32, String>>
 
                 solvers.lock().unwrap().get_mut(&id).unwrap().remove(&our_id);
 
-                send_ok(&id, &auditor, &nodes);
+                send_ok(&id, Arc::clone(&auditor), Arc::clone(&nodes));
             } else {
                 solvers.lock().unwrap().remove(&id);
                 // TODO Send not ok to everyone
@@ -603,7 +511,7 @@ pub fn handle(auditor: &Mutex<Auditor>, nodes: &Mutex<HashMap<i32, String>>
 }
 
 
-pub fn send_ok(id: &i32, auditor: &Mutex<Auditor>, nodes: &Mutex<HashMap<i32, String>>) {
+pub fn send_ok(id: &i32, auditor: Arc<Mutex<Auditor>>, nodes: Arc<Mutex<HashMap<i32, String>>>) {
     let our_id = auditor.lock().unwrap().id;
     for (node_id, addr) in nodes.lock().unwrap().iter() {
         if *node_id != our_id {

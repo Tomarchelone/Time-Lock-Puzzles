@@ -10,11 +10,8 @@ use std::sync::{Mutex, Arc};
 use std::net::TcpListener;
 use std::net::TcpStream;
 
-//use rand::Rng;
-
 use num::Num;
 use num::bigint::RandBigInt;
-//use num::bigint::ToBigUint;
 use num::One;
 use num::Zero;
 
@@ -23,6 +20,45 @@ pub struct TimeLockPuzzle {
     pub n: num::BigUint, // n = p * q, where p and q are primes
     pub a: num::BigUint, // Number to square
     pub t: num::BigUint, // Number of squarings
+}
+
+impl TimeLockPuzzle {
+    pub fn solve(&self) -> num::BigUint {
+        let (n, mut a, mut t) = (self.n.clone(), self.a.clone(), self.t.clone());
+        let zero = num::BigUint::zero();
+        let one = num::BigUint::one();
+
+        while t != zero {
+            t -= &one;
+            a = (&a * &a) % &n;
+        }
+
+        a
+    }
+
+    pub fn solve_with_a(&self, mut a: num::BigUint) -> num::BigUint {
+        let (n, mut t) = (self.n.clone(), self.t.clone());
+        let zero = num::BigUint::zero();
+        let one = num::BigUint::one();
+
+        while t != zero {
+            t -= &one;
+            a = (&a * &a) % &n;
+        }
+
+        a
+    }
+
+    // returns string ""n a t"
+    pub fn stringify(&self) -> String {
+        format!
+        (
+            "{} {} {}"
+            , &self.n.to_str_radix(10)
+            , &self.a.to_str_radix(10)
+            , &self.t.to_str_radix(10)
+        )
+    }
 }
 
 // puzzle with answers
@@ -150,45 +186,6 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
         if seems_prime {
             return candidate;
         }
-    }
-}
-
-impl TimeLockPuzzle {
-    pub fn solve(&self) -> num::BigUint {
-        let (n, mut a, mut t) = (self.n.clone(), self.a.clone(), self.t.clone());
-        let zero = num::BigUint::zero();
-        let one = num::BigUint::one();
-
-        while t != zero {
-            t -= &one;
-            a = (&a * &a) % &n;
-        }
-
-        a
-    }
-
-    pub fn solve_with_a(&self, mut a: num::BigUint) -> num::BigUint {
-        let (n, mut t) = (self.n.clone(), self.t.clone());
-        let zero = num::BigUint::zero();
-        let one = num::BigUint::one();
-
-        while t != zero {
-            t -= &one;
-            a = (&a * &a) % &n;
-        }
-
-        a
-    }
-
-    // returns string ""n a t"
-    pub fn stringify(&self) -> String {
-        format!
-        (
-            "{} {} {}"
-            , &self.n.to_str_radix(10)
-            , &self.a.to_str_radix(10)
-            , &self.t.to_str_radix(10)
-        )
     }
 }
 
@@ -403,6 +400,14 @@ impl TlpServer {
 
         println!("SERVER {} IS RUNNING", self.id);
 
+        for addr in self.nodes.lock().unwrap().values() {
+            let mut stream = TcpStream::connect(&addr).unwrap();
+
+            let message = format!("[NEW] {} {}", self.id, &self.addr);
+
+            write_message(&mut stream, message);
+        } // TODO check that all nodes received the message 
+
         for stream in listener.incoming() {
             let auditor = Arc::clone(&self.auditor);
             let nodes = Arc::clone(&self.nodes);
@@ -426,21 +431,26 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
     let message: String = receive_message(&mut stream);
     let message: Vec<&str> = message.split_whitespace().collect();
     let our_id = auditor.lock().unwrap().id;
-    //let message: Vec<&str> = message.split_whitespace().collect();
 
-    // [NEW] node_id            - message from new node
+    // [NEW] node_id addr       - message from new node
     // [PUZ] id                 - request for puzzle
     // [VER] id id:solution ... - sequest for verification
     // [COR] id node_id         - message from other node, verifying correctness of id's solution
 
     match message[0] as &str {
         "[NEW]" => {
-           // TODO? 
+           let node_id = i32::from_str_radix(message[1], 10).unwrap();
+           nodes.lock().unwrap().insert(node_id, message[2].to_string());
+
+           println!("Server {} remembered new node with id {}", our_id, node_id);
         },
 
         "[PUZ]" => {
             let id = i32::from_str_radix(message[1], 10).unwrap();
-            let puzzle_str = auditor.lock().unwrap().serve_puzzle(id, nodes.lock().unwrap().len()).stringify();
+            let puzzle_str = auditor
+                                .lock().unwrap()
+                                .serve_puzzle(id, nodes.lock().unwrap().len())
+                                .stringify();
 
             write_message(&mut stream, puzzle_str);
 

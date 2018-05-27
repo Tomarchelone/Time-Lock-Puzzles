@@ -1,5 +1,6 @@
 extern crate num;
 extern crate rand;
+extern crate failure;
 
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -9,6 +10,8 @@ use std::thread;
 use std::sync::{Mutex, Arc};
 use std::net::TcpListener;
 use std::net::TcpStream;
+use std::io::ErrorKind;
+//use std::error::Error;
 
 use num::Num;
 use num::bigint::RandBigInt;
@@ -23,6 +26,16 @@ pub struct TimeLockPuzzle {
 }
 
 impl TimeLockPuzzle {
+    pub fn from_string(s: String) -> Result<TimeLockPuzzle, failure::Error> {
+        let p_vec: Vec<&str> = s.split_whitespace().collect();
+
+        let n = num::BigUint::from_str_radix(p_vec[0], 10)?; 
+        let a = num::BigUint::from_str_radix(p_vec[1], 10)?; 
+        let t = num::BigUint::from_str_radix(p_vec[2], 10)?;
+
+        Ok( TimeLockPuzzle {n, a, t} )
+    }
+
     pub fn solve(&self) -> num::BigUint {
         let (n, mut a, mut t) = (self.n.clone(), self.a.clone(), self.t.clone());
         let zero = num::BigUint::zero();
@@ -49,7 +62,7 @@ impl TimeLockPuzzle {
         a
     }
 
-    // returns string ""n a t"
+    // returns string "n a t"
     pub fn stringify(&self) -> String {
         format!
         (
@@ -66,7 +79,7 @@ pub struct UnlockedPuzzle {
     pub puzzle: TimeLockPuzzle,
     pub p: num::BigUint, // prime derivative of n
     pub q: num::BigUint, // prime derivative of n
-    pub key: num::BigUint, // answer to the puzzle: a**t mod n
+    pub key: num::BigUint, // answer to the puzzle: (a ** (2 ** t)) mod n
 }
 
 #[derive(Clone)]
@@ -91,7 +104,7 @@ impl PuzzleGenerator {
     pub fn gen_puzzle<U>(&self, time: U) -> UnlockedPuzzle
         where U:  num::bigint::ToBigUint
     {
-        let t = time.to_biguint().unwrap();
+        let t = time.to_biguint().expect("Should not occure");
         let p = gen_pseudo_prime(self.bit_size);
         let q = gen_pseudo_prime(self.bit_size);
         let n = &p * &q;
@@ -125,10 +138,10 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
 
     loop {
         let mut seems_prime = true;
+
         // We set first and last bit to 1
-        let candidate = rng.gen_biguint(bit_size)
-                        | &one
-                        | &one << (bit_size - 1);
+        let candidate = rng.gen_biguint(bit_size) | &one | ( &one << (bit_size - 1) );
+
         // First we check some small primes
         for small_prime in small_primes.into_iter() {
             if (&candidate % small_prime) == zero {
@@ -139,7 +152,6 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
 
         // Now we use Fermat's teorem
         if seems_prime {
-            // let a = rng.gen_biguint(bit_size);
             let test = &two.modpow(&(&candidate - 1 as u32), &candidate);
             if test != &one {
                 seems_prime = false;
@@ -158,7 +170,7 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
             }
 
             let n_1 = &candidate - &one;
-            'A: for _ in 1..k+1 {
+            'L: for _ in 1..k+1 {
                 if !seems_prime {
                     break
                 }
@@ -168,12 +180,12 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
                     continue
                 }
 
-                for __ in 1..s {
+                for _ in 1..s {
                     x = (&x * &x) % &candidate;
                     if x == one {
                         break
                     } else if x == &candidate - &one {
-                        continue 'A
+                        continue 'L
                     }
                 }
 
@@ -194,7 +206,7 @@ pub struct Auditor {
     pub id: i32,
     time_lock: num::BigUint,
     generator: PuzzleGenerator,
-    requests: HashMap<i32, UnlockedPuzzle>,  // множество выданных загадок
+    requests: HashMap<i32, UnlockedPuzzle>,
 }
 
 impl Auditor {
@@ -203,15 +215,17 @@ impl Auditor {
     {
         Auditor {
             id,
-            time_lock: tl.to_biguint().unwrap(),
+            time_lock: tl.to_biguint().expect("Should not occure"),
             generator: PuzzleGenerator::new(),
             requests: HashMap::new(),
         }
     }
 
-    // return puzzle and remember the solver
+    // Return puzzle and remember the solver
     pub fn serve_puzzle(&mut self, solver_id: i32, number_of_auditors: usize) -> TimeLockPuzzle {
-        let unlocked = self.generator.gen_puzzle(self.time_lock.clone() / number_of_auditors);
+        let unlocked = self.generator.gen_puzzle(
+            self.time_lock.clone() / (number_of_auditors + num::BigUint::one())
+        );
         let puzzle = unlocked.puzzle.clone();
 
         self.requests.insert(solver_id, unlocked);
@@ -220,34 +234,41 @@ impl Auditor {
     }
 
     pub fn verify(&mut self, solver_id: i32, solutions: &Vec<(i32, num::BigUint)>) -> bool {
-        let unblocked = self.requests.remove(&solver_id).unwrap();
-        let puzzle = unblocked.puzzle;
+        let unblocked = self.requests.remove(&solver_id);
 
-        let mut input = num::BigUint::zero();
-        for (id, solution) in solutions.iter() {
-            if *id == self.id {
-                if input == num::BigUint::zero() {
-                    return *solution == unblocked.key; 
+        match unblocked {
+            Some(u) => {
+                let unblocked = u;
+                let puzzle = unblocked.puzzle;
+
+                let mut input = num::BigUint::zero();
+                for (id, solution) in solutions.iter() {
+                    if *id == self.id {
+                        if input == num::BigUint::zero() {
+                            return *solution == unblocked.key; 
+                        }
+
+                        let (t, n) = (&puzzle.t, &puzzle.n);
+                        let (p, q) = (&unblocked.p, &unblocked.q);
+
+                        let one = num::BigUint::one();
+                        let two = &one + &one;
+
+                        let phi = (p - &one) * (q - &one);
+                        let e = two.modpow(t, &phi);
+                        let true_key = input.modpow(&e, n);
+
+                        return *solution == true_key
+
+                    }
+
+                    input = solution.clone();
                 }
 
-                let (t, n) = (&puzzle.t, &puzzle.n);
-                let (p, q) = (&unblocked.p, &unblocked.q);
-
-                let one = num::BigUint::one();
-                let two = &one + &one;
-
-                let phi = (p - &one) * (q - &one);
-                let e = two.modpow(t, &phi);
-                let true_key = input.modpow(&e, n);
-
-                return *solution == true_key
-
-            }
-
-            input = solution.clone();
+                false
+            },
+            _ => false,
         }
-
-        false
     }
 }
 
@@ -314,39 +335,38 @@ impl TlpClient {
         }
     }
 
-    pub fn request(&mut self) {
+    pub fn request(&mut self) -> Result<(), failure::Error> {
         for (node_id, addr) in &self.nodes {
-            let mut puzzle_stream = TcpStream::connect(&addr);
-            loop {
-                match puzzle_stream {
-                    Ok(_) => { break },
-                    _ => {
-                        println!("Client {} wasn't able to connect, retry", self.solver.id);
-                        puzzle_stream = TcpStream::connect(&addr);
-                    },
-                }
-            };
+            'L: loop { match TcpStream::connect(&addr) {
+                Ok(mut puzzle_stream) => {
+                    let message = format!("[PUZ] {}", self.solver.id);
+                    write_message(&mut puzzle_stream, message)?;
 
-            let mut puzzle_stream = puzzle_stream.unwrap();
+                    println!(
+                        "Client {} send the request to server {}"
+                        , self.solver.id
+                        , node_id
+                    );
 
-            let message = format!("[PUZ] {}", self.solver.id);
-            write_message(&mut puzzle_stream, message);
+                    let mut puzzle_str = receive_message(&mut puzzle_stream)?;
 
-            println!("Client {} send the request to server {}", self.solver.id, node_id);
+                    println!(
+                        "Client {} received the answer from server {}"
+                        , self.solver.id
+                        , node_id
+                    );
 
-            let mut puzzle_str = receive_message(&mut puzzle_stream);
-
-            println!("Client {} received the answer from server {}", self.solver.id, node_id);
-
-            let mut iter = puzzle_str
-                            .split_whitespace()
-                            .map(|x| num::BigUint::from_str_radix(x, 10).unwrap());
-            let (n, a, t)  = (iter.next().unwrap(), iter.next().unwrap(), iter.next().unwrap());
-
-            self.puzzles.insert(*node_id, TimeLockPuzzle {n, a, t});
+                    let puzzle = TimeLockPuzzle::from_string(puzzle_str)?;
+                    self.puzzles.insert(*node_id, puzzle);
+                    break 'L       
+                },
+                _ => {}
+            }}
         }
 
         println!("CLIENT RECEIVED ALL PUZZLES");
+
+        Ok(())
     }
 
     pub fn solve(&mut self) {
@@ -357,18 +377,19 @@ impl TlpClient {
         println!("SOLVER SOLVED ALL PUZZLES");
     }
 
-    pub fn send(&self) {
+    pub fn send(&self) -> Result<(), failure::Error> {
         for addr in self.nodes.values() {
-            let mut solution_stream = TcpStream::connect(&addr).unwrap();
+            let mut solution_stream = TcpStream::connect(&addr)?;
             
-            match &self.solution_str {
-                Some(ref sol_str) => {
-                    let message = format!("[VER] {}", &sol_str);
-                    write_message(&mut solution_stream, message);
-                },
-                _ => {println!("Solution string did non match")}
-            }
+            let solution_str = &self.solution_str
+                                    .as_ref()
+                                    .ok_or(std::io::Error::new(ErrorKind::NotFound
+                                                               , "There is no solution yet!"))?;
+            let message = format!("[VER] {}", &solution_str);
+            write_message(&mut solution_stream, message)?;
         }
+
+        Ok(())
     }
 }
 
@@ -393,44 +414,60 @@ impl TlpServer {
         }
     }
 
-    pub fn start(&mut self) {
+    pub fn start(&mut self) -> Result<(), failure::Error> {
         println!("Server {} is trying to bind to {}", self.id, self.addr);
 
-        let listener = TcpListener::bind(&self.addr).unwrap();
+        let listener = TcpListener::bind(&self.addr)?;
 
         println!("SERVER {} IS RUNNING", self.id);
 
-        for addr in self.nodes.lock().unwrap().values() {
-            let mut stream = TcpStream::connect(&addr).unwrap();
+        // We want to reach all other nodes before we start running, so we
+        // perform loop until we connect to all nodes.
+        for (_, addr) in self.nodes.lock().expect("Lock is poisoned").iter() {
+            'L: loop {
+                let mut stream = TcpStream::connect(&addr);
 
-            let message = format!("[NEW] {} {}", self.id, &self.addr);
+                match stream {
+                    Ok(mut stream) => {
+                        let message = format!("[NEW] {} {}", self.id, &self.addr);
+                        write_message(&mut stream, message)?;
 
-            write_message(&mut stream, message);
-        } // TODO check that all nodes received the message 
+                        break 'L
+                    },
+                    _ => {std::thread::sleep(std::time::Duration::from_millis(1));},
+                }
+            }
+
+        }
 
         for stream in listener.incoming() {
             let auditor = Arc::clone(&self.auditor);
             let nodes = Arc::clone(&self.nodes);
-            let solvers = Arc::clone(&self.solvers);
+            let solvers = Arc::clone(&self.solvers); 
             match stream {
                 Ok(stream) => {
-                    thread::spawn(move || { handle(auditor, nodes, solvers, stream) }); 
+                    thread::spawn(move || {
+                        handle(auditor, nodes, solvers, stream)
+                            .expect("Handle of server is down");
+                    }); 
                 },
                 _ => {println!("Failed to connect to {}", self.id)}
             }
         }
-        
-    } 
+
+        Ok(())
+    }
 }
 
-// auditor, nodes, solvers
-pub fn handle(auditor: Arc<Mutex<Auditor>>
+pub fn handle(  auditor: Arc<Mutex<Auditor>>
               , nodes: Arc<Mutex<HashMap<i32, String>>>
               , solvers: Arc<Mutex<HashMap<i32, HashSet<i32>>>>
-              , mut stream: TcpStream) {
-    let message: String = receive_message(&mut stream);
+              , mut stream: TcpStream
+              ) -> Result<(), failure::Error>
+{
+    let message: String = receive_message(&mut stream)?;
     let message: Vec<&str> = message.split_whitespace().collect();
-    let our_id = auditor.lock().unwrap().id;
+    let our_id = auditor.lock().expect("Lock is poisoned").id;
 
     // [NEW] node_id addr       - message from new node
     // [PUZ] id                 - request for puzzle
@@ -439,30 +476,29 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
 
     match message[0] as &str {
         "[NEW]" => {
-           let node_id = i32::from_str_radix(message[1], 10).unwrap();
-           nodes.lock().unwrap().insert(node_id, message[2].to_string());
-
-           println!("Server {} remembered new node with id {}", our_id, node_id);
+           let node_id = i32::from_str_radix(message[1], 10)?;
+           nodes.lock().expect("Lock is poisoned").insert(node_id, message[2].to_string());
         },
 
         "[PUZ]" => {
-            let id = i32::from_str_radix(message[1], 10).unwrap();
+            let id = i32::from_str_radix(message[1], 10)?;
+            let len = nodes.lock().expect("Lock is poisoned").len();
             let puzzle_str = auditor
-                                .lock().unwrap()
-                                .serve_puzzle(id, nodes.lock().unwrap().len())
+                                .lock().expect("Lock is poisoned")
+                                .serve_puzzle(id, len)
                                 .stringify();
 
-            write_message(&mut stream, puzzle_str);
+            write_message(&mut stream, puzzle_str)?;
 
             let mut set = HashSet::<i32>::new();
-            for node in nodes.lock().unwrap().keys() {
+            for node in nodes.lock().expect("Lock is poisoned").keys() {
                 set.insert(*node);
             }
-            solvers.lock().unwrap().insert(id, set);
+            solvers.lock().expect("Lock is poisoned").insert(id, set);
         },
 
         "[VER]" => {
-            let id = i32::from_str_radix(message[1], 10).unwrap();
+            let id = i32::from_str_radix(message[1], 10)?;
 
             let mut solutions = Vec::<(i32, num::BigUint)>::new();
             
@@ -470,27 +506,41 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                 let pair: Vec<&str> = pair.split(":").collect();
                 solutions.push(
                     (
-                        i32::from_str_radix(pair[0], 10).unwrap(),
-                        num::BigUint::from_str_radix(pair[1], 10).unwrap()
+                        i32::from_str_radix(pair[0], 10)?,
+                        num::BigUint::from_str_radix(pair[1], 10)?
                     )
                 );
             }
 
-            if auditor.lock().unwrap().verify(id, &solutions) {
+            if auditor.lock().expect("Lock is poisoned").verify(id, &solutions) {
                 println!("Server {} verified solution of Client {}", our_id, &id);
 
-                solvers.lock().unwrap().get_mut(&id).unwrap().remove(&our_id);
+                solvers.lock().expect("Lock is poisoned")
+                        .get_mut(&id)
+                        .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, "No such solver!"))?
+                        .remove(&our_id);
 
-                send_ok(&id, Arc::clone(&auditor), Arc::clone(&nodes));
+                // Behavior here is not that simple. From one hand we already know that Client
+                // solved puzzle correctly, so it is our duty to tell the others about it.
+                // From the other hand, we generally cannot afford infinite loop here since
+                // it can turn this thread into ulimited resource eater.
+                // It is decided to send_ok() for fixed amount of times and then, if all attempts
+                // fail, to stop. It prevents DDoS-ing while giving Solver some credit.
+                for _ in 0..10 {
+                    if match send_ok(&id, Arc::clone(&auditor), Arc::clone(&nodes)) {
+                        Ok(()) => true,
+                        _ => false
+                    } { return Ok(()) }
+                }
+                send_ok(&id, Arc::clone(&auditor), Arc::clone(&nodes))?; 
             } else {
-                solvers.lock().unwrap().remove(&id);
+                solvers.lock().expect("Lock is poisoned").remove(&id);
             }
-
         },
 
         "[COR]" => {
-            let id = i32::from_str_radix(message[1], 10).unwrap();
-            let node_id = i32::from_str_radix(message[2], 10).unwrap();
+            let id = i32::from_str_radix(message[1], 10)?;
+            let node_id = i32::from_str_radix(message[2], 10)?;
 
             println!(
                 "Server {} received comfirmation from server {} about Client {}"
@@ -499,12 +549,13 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                 , id
             );
             
-            match solvers.lock().unwrap().get_mut(&id) {
-                Some(set) => {set.remove(&node_id);},
-                _ => { println!("get_mut error") },
-            }
+            solvers.lock().expect("Lock is poisoned")
+                   .get_mut(&id).ok_or(std::io::Error::new(  ErrorKind::NotFound
+                                                           , "There is no solution yet!"))?
+                   .remove(&node_id);
 
-            if solvers.lock().unwrap()[&id].is_empty() {
+
+            if solvers.lock().expect("Lock is poisoned")[&id].is_empty() {
                 println!(
                     "SERVER {} ADDED REQUEST OF SOLVER {} TO BLOCKCHAIN"
                     , our_id
@@ -516,41 +567,48 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
         _ => {}
     }
 
-    
+    Ok(())
 }
 
 
-pub fn send_ok(id: &i32, auditor: Arc<Mutex<Auditor>>, nodes: Arc<Mutex<HashMap<i32, String>>>) {
-    let our_id = auditor.lock().unwrap().id;
-    for (node_id, addr) in nodes.lock().unwrap().iter() {
-        if *node_id != our_id {
-            let mut ok_stream = TcpStream::connect(addr).unwrap();
+pub fn send_ok(id: &i32, auditor: Arc<Mutex<Auditor>>, nodes: Arc<Mutex<HashMap<i32, String>>>)
+    -> Result<(), failure::Error>
+{
+    let our_id = auditor.lock().expect("Lock is poisoned").id;
 
-            write_message(&mut ok_stream, format!("[COR] {} {}", id, our_id));
+    for (node_id, addr) in nodes.lock().expect("Lock is poisoned").iter() {
+        if *node_id != our_id {
+            let mut ok_stream = TcpStream::connect(addr)?;
+
+            write_message(&mut ok_stream, format!("[COR] {} {}", id, our_id))?;
         }
     }
+
+    Ok(())
 }
 
-fn receive_message(stream: &mut TcpStream) -> String {
+fn receive_message(stream: &mut TcpStream) -> Result<String, failure::Error> {
     let mut len = [0 as u8; 4];
 
-    stream.read_exact(&mut len).unwrap();
+    stream.read_exact(&mut len)?;
     let len = idiotic_u8_to_u32(len);
 
     let mut buff = vec![0 as u8; len as usize];
-    stream.read_exact(&mut buff).unwrap();
+    stream.read_exact(&mut buff)?;
 
-    let message = String::from_utf8(buff).unwrap();
+    let message = String::from_utf8(buff)?;
 
-    message
+    Ok(message)
 }
 
-fn write_message(stream: &mut TcpStream, message: String) {
+fn write_message(stream: &mut TcpStream, message: String) -> Result<(), failure::Error> {
    let len: u32 = message.len() as u32;
    let len = idiotic_u32_to_u8(len);
 
-   stream.write(&len).unwrap();
-   stream.write(message.as_bytes()).unwrap();
+   stream.write(&len)?;
+   stream.write(message.as_bytes())?;
+
+   Ok(())
 }
 
 fn idiotic_u32_to_u8(mut n: u32) -> [u8; 4] {

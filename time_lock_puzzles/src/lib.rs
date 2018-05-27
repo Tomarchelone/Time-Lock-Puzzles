@@ -11,7 +11,6 @@ use std::sync::{Mutex, Arc};
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::io::ErrorKind;
-//use std::error::Error;
 
 use num::Num;
 use num::bigint::RandBigInt;
@@ -62,7 +61,6 @@ impl TimeLockPuzzle {
         a
     }
 
-    // returns string "n a t"
     pub fn stringify(&self) -> String {
         format!
         (
@@ -74,12 +72,12 @@ impl TimeLockPuzzle {
     }
 }
 
-// puzzle with answers
+// Puzzle with answers
 pub struct UnlockedPuzzle {
     pub puzzle: TimeLockPuzzle,
-    pub p: num::BigUint, // prime derivative of n
-    pub q: num::BigUint, // prime derivative of n
-    pub key: num::BigUint, // answer to the puzzle: (a ** (2 ** t)) mod n
+    pub p: num::BigUint, // Prime derivative of n
+    pub q: num::BigUint, // Prime derivative of n
+    pub key: num::BigUint, // Answer to the puzzle: (a ** (2 ** t)) mod n
 }
 
 #[derive(Clone)]
@@ -202,6 +200,7 @@ fn gen_pseudo_prime(bit_size: usize) -> num::BigUint {
 }
 
 // Entity who provides the puzzles and validates the solutions
+// Note: this entity is abstract, net interaction is provided by TlpServer
 pub struct Auditor {
     pub id: i32,
     time_lock: num::BigUint,
@@ -273,6 +272,7 @@ impl Auditor {
 }
 
 // Entity who solves puzzles
+// Again, abstract one. For net interaction see TlpClient
 pub struct Solver {
     pub id: i32,
 }
@@ -341,7 +341,9 @@ impl TlpClient {
                 Ok(mut puzzle_stream) => {
                     let message = format!("[PUZ] {}", self.solver.id);
                     write_message(&mut puzzle_stream, message)?;
-
+                    
+                    // "println!"s here and below are present exclusively for
+                    // example and debug purposes and can be fearlessly removed 
                     println!(
                         "Client {} send the request to server {}"
                         , self.solver.id
@@ -383,8 +385,13 @@ impl TlpClient {
             
             let solution_str = &self.solution_str
                                     .as_ref()
-                                    .ok_or(std::io::Error::new(ErrorKind::NotFound
-                                                               , "There is no solution yet!"))?;
+                                    .ok_or(
+                                        std::io::Error::new(
+                                            ErrorKind::NotFound
+                                            , "There is no solution yet!"
+                                        )
+                                    )?;
+
             let message = format!("[VER] {}", &solution_str);
             write_message(&mut solution_stream, message)?;
         }
@@ -397,7 +404,7 @@ pub struct TlpServer {
     id: i32,
     addr: String, // Web address
     auditor: Arc<Mutex<Auditor>>,
-    nodes: Arc<Mutex<HashMap<i32, String>>>, // addresses of nodes
+    nodes: Arc<Mutex<HashMap<i32, String>>>, // Addresses of nodes
     solvers: Arc<Mutex<HashMap<i32, HashSet<i32>>>>, // Set of nodes, who yet haven't verified solver
 }
 
@@ -448,10 +455,10 @@ impl TlpServer {
                 Ok(stream) => {
                     thread::spawn(move || {
                         handle(auditor, nodes, solvers, stream)
-                            .expect("Handle of server is down");
+                        .expect("Handle of server is down");
                     }); 
                 },
-                _ => {println!("Failed to connect to {}", self.id)}
+                _ => { println!("Failed to connect to {}", self.id) }
             }
         }
 
@@ -459,7 +466,7 @@ impl TlpServer {
     }
 }
 
-pub fn handle(  auditor: Arc<Mutex<Auditor>>
+pub fn handle(auditor: Arc<Mutex<Auditor>>
               , nodes: Arc<Mutex<HashMap<i32, String>>>
               , solvers: Arc<Mutex<HashMap<i32, HashSet<i32>>>>
               , mut stream: TcpStream
@@ -484,9 +491,9 @@ pub fn handle(  auditor: Arc<Mutex<Auditor>>
             let id = i32::from_str_radix(message[1], 10)?;
             let len = nodes.lock().expect("Lock is poisoned").len();
             let puzzle_str = auditor
-                                .lock().expect("Lock is poisoned")
-                                .serve_puzzle(id, len)
-                                .stringify();
+                             .lock().expect("Lock is poisoned")
+                             .serve_puzzle(id, len)
+                             .stringify();
 
             write_message(&mut stream, puzzle_str)?;
 
@@ -516,9 +523,9 @@ pub fn handle(  auditor: Arc<Mutex<Auditor>>
                 println!("Server {} verified solution of Client {}", our_id, &id);
 
                 solvers.lock().expect("Lock is poisoned")
-                        .get_mut(&id)
-                        .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, "No such solver!"))?
-                        .remove(&our_id);
+                       .get_mut(&id)
+                       .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, "No such solver!"))?
+                       .remove(&our_id);
 
                 // Behavior here is not that simple. From one hand we already know that Client
                 // solved puzzle correctly, so it is our duty to tell the others about it.
@@ -550,8 +557,12 @@ pub fn handle(  auditor: Arc<Mutex<Auditor>>
             );
             
             solvers.lock().expect("Lock is poisoned")
-                   .get_mut(&id).ok_or(std::io::Error::new(  ErrorKind::NotFound
-                                                           , "There is no solution yet!"))?
+                   .get_mut(&id).ok_or(
+                       std::io::Error::new(
+                           ErrorKind::NotFound
+                           , "There is no solution yet!"
+                        )
+                    )?
                    .remove(&node_id);
 
 
@@ -591,7 +602,7 @@ fn receive_message(stream: &mut TcpStream) -> Result<String, failure::Error> {
     let mut len = [0 as u8; 4];
 
     stream.read_exact(&mut len)?;
-    let len = idiotic_u8_to_u32(len);
+    let len = u8_arr_to_u32(len);
 
     let mut buff = vec![0 as u8; len as usize];
     stream.read_exact(&mut buff)?;
@@ -603,7 +614,7 @@ fn receive_message(stream: &mut TcpStream) -> Result<String, failure::Error> {
 
 fn write_message(stream: &mut TcpStream, message: String) -> Result<(), failure::Error> {
    let len: u32 = message.len() as u32;
-   let len = idiotic_u32_to_u8(len);
+   let len = u32_to_u8_arr(len);
 
    stream.write(&len)?;
    stream.write(message.as_bytes())?;
@@ -611,7 +622,7 @@ fn write_message(stream: &mut TcpStream, message: String) -> Result<(), failure:
    Ok(())
 }
 
-fn idiotic_u32_to_u8(mut n: u32) -> [u8; 4] {
+fn u32_to_u8_arr(mut n: u32) -> [u8; 4] {
     let mut res = [0 as u8; 4];
     for i in 0..4 {
         res[i] = (n % 256) as u8;
@@ -621,7 +632,7 @@ fn idiotic_u32_to_u8(mut n: u32) -> [u8; 4] {
     res
 }
 
-fn idiotic_u8_to_u32(arr: [u8; 4]) -> u32 {
+fn u8_arr_to_u32(arr: [u8; 4]) -> u32 {
     let mut res: u32 = 0;
     let mut mull: u32 = 1;
     for i in 0..4 {

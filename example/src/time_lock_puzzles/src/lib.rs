@@ -430,7 +430,7 @@ impl TlpServer {
 
         // We want to reach all other nodes before we start running, so we
         // perform loop until we connect to all nodes.
-        for (_, addr) in self.nodes.lock().expect("Lock is poisoned").iter() {
+        for (_, addr) in self.nodes.lock().unwrap().iter() {
             'L: loop {
                 let mut stream = TcpStream::connect(&addr);
 
@@ -474,7 +474,7 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
 {
     let message: String = receive_message(&mut stream)?;
     let message: Vec<&str> = message.split_whitespace().collect();
-    let our_id = auditor.lock().expect("Lock is poisoned").id;
+    let our_id = auditor.lock().unwrap().id;
 
     // [NEW] node_id addr       - message from new node
     // [PUZ] id                 - request for puzzle
@@ -484,24 +484,24 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
     match message[0] as &str {
         "[NEW]" => {
            let node_id = i32::from_str_radix(message[1], 10)?;
-           nodes.lock().expect("Lock is poisoned").insert(node_id, message[2].to_string());
+           nodes.lock().unwrap().insert(node_id, message[2].to_string());
         },
 
         "[PUZ]" => {
             let id = i32::from_str_radix(message[1], 10)?;
-            let len = nodes.lock().expect("Lock is poisoned").len();
+            let len = nodes.lock().unwrap().len();
             let puzzle_str = auditor
-                             .lock().expect("Lock is poisoned")
+                             .lock().unwrap()
                              .serve_puzzle(id, len)
                              .stringify();
 
             write_message(&mut stream, puzzle_str)?;
 
             let mut set = HashSet::<i32>::new();
-            for node in nodes.lock().expect("Lock is poisoned").keys() {
+            for node in nodes.lock().unwrap().keys() {
                 set.insert(*node);
             }
-            solvers.lock().expect("Lock is poisoned").insert(id, set);
+            solvers.lock().unwrap().insert(id, set);
         },
 
         "[VER]" => {
@@ -519,10 +519,10 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                 );
             }
 
-            if auditor.lock().expect("Lock is poisoned").verify(id, &solutions) {
+            if auditor.lock().unwrap().verify(id, &solutions) {
                 println!("Server {} verified solution of Client {}", our_id, &id);
 
-                solvers.lock().expect("Lock is poisoned")
+                solvers.lock().unwrap()
                        .get_mut(&id)
                        .ok_or(std::io::Error::new(std::io::ErrorKind::NotFound, "No such solver!"))?
                        .remove(&our_id);
@@ -541,7 +541,7 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                 }
                 send_ok(&id, Arc::clone(&auditor), Arc::clone(&nodes))?; 
             } else {
-                solvers.lock().expect("Lock is poisoned").remove(&id);
+                solvers.lock().unwrap().remove(&id);
             }
         },
 
@@ -556,7 +556,7 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                 , id
             );
             
-            solvers.lock().expect("Lock is poisoned")
+            solvers.lock().unwrap()
                    .get_mut(&id).ok_or(
                        std::io::Error::new(
                            ErrorKind::NotFound
@@ -566,7 +566,7 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
                    .remove(&node_id);
 
 
-            if solvers.lock().expect("Lock is poisoned")[&id].is_empty() {
+            if solvers.lock().unwrap()[&id].is_empty() {
                 println!(
                     "SERVER {} ADDED REQUEST OF SOLVER {} TO BLOCKCHAIN"
                     , our_id
@@ -585,9 +585,9 @@ pub fn handle(auditor: Arc<Mutex<Auditor>>
 pub fn send_ok(id: &i32, auditor: Arc<Mutex<Auditor>>, nodes: Arc<Mutex<HashMap<i32, String>>>)
     -> Result<(), failure::Error>
 {
-    let our_id = auditor.lock().expect("Lock is poisoned").id;
+    let our_id = auditor.lock().unwrap().id;
 
-    for (node_id, addr) in nodes.lock().expect("Lock is poisoned").iter() {
+    for (node_id, addr) in nodes.lock().unwrap().iter() {
         if *node_id != our_id {
             let mut ok_stream = TcpStream::connect(addr)?;
 
